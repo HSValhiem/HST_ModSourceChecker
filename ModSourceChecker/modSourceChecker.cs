@@ -1,18 +1,16 @@
-﻿using dnlib.DotNet;
-using Microsoft.VisualBasic.FileIO;
-using Mono.Cecil;
-using System.Net;
+﻿using Mono.Cecil;
 using System.Reflection;
 using System.Text.RegularExpressions;
-using static System.Net.Mime.MediaTypeNames;
+using Microsoft.VisualBasic.FileIO;
+using dnlib.DotNet;
+using CustomAttribute = dnlib.DotNet.CustomAttribute;
 
-namespace ConsoleApp
+namespace modSourceChecker
 {
     class modSourceChecker
     {
 
-        private static readonly List<string> DeletedClasses = new List<string>();
-
+        private static readonly List<string> DeletedClasses = new ();
         public static string assemblyName = "";
 
         static void Main(string[] args)
@@ -27,7 +25,10 @@ namespace ConsoleApp
 
             // Get Mod Path from Arg
             string dllPath = args[0];
-            //string dllPath = "D:\\Valheim_Dev\\WIP\\ServerCharacters.dll";
+
+            //string dllPath = "D:\\Valheim_Dev\\WIP\\AzuAntiCheat.dll";
+
+
             // Get Dir of ModSourceChecker.exe
             string? exeDirectory = GetExecutingAssemblyDirectory();
             if (exeDirectory == null)
@@ -155,6 +156,9 @@ namespace ConsoleApp
             return data;
         }
 
+
+
+
         // Checks a provided Mod DLL for any class references that are changed or deleted
         public static void checkMod(string dllPath, List<string> csFiles)
         {
@@ -188,11 +192,51 @@ namespace ConsoleApp
                 }
             }
 
-            // Report Clean
-            if (!detected)
+            Console.WriteLine("");
+            // Search for Harmony Patches that Target Changed Classes
+            bool detectedHarmony = false;
+            ModuleDefMD module = ModuleDefMD.Load(dllPath);
+            foreach (string csFile in csFiles)
             {
-                Console.WriteLine($"Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll does not reference any Changed or Deleted Classes in {assemblyName}.dll");
+                string csContent = File.ReadAllText(csFile);
+                string? mainClassName = GetMainClassName(csContent);
+
+                foreach (TypeDef type in module.GetTypes())
+                {
+                    if (type.CustomAttributes == null)
+                        continue;
+
+                    foreach (CustomAttribute ca in type.CustomAttributes)
+                    {
+                        if (ca.TypeFullName == "HarmonyLib.HarmonyPatch")
+                        {
+                            if (ca.HasConstructorArguments && ca.ConstructorArguments.Count == 2)
+                            {
+                                string? className = ca.ConstructorArguments[0].Value?.ToString();
+                                string? methodName = ca.ConstructorArguments[1].Value?.ToString();
+
+                                if (className == mainClassName)
+                                {
+                                    Console.WriteLine($"Detected Harmony Patch of Changed Class: \"{className}\" Method: \"{methodName}\" in Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll from referenced {assemblyName}.dll");
+                                    detectedHarmony = true;
+                                }
+                            }
+                        }
+                    }
+                }
             }
+
+
+            // Report Clean
+            if (!detectedHarmony && !detectedHarmony)
+            {
+                Console.WriteLine($"Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll does not have any References to Changed or Deleted Classes in {assemblyName}.dll");
+                Console.WriteLine($"It Should work With the New Update with no Issues");
+            }
+            else if (!detected)
+                Console.WriteLine($"Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll does not Directly-Reference(Non-Harmony) any Changed or Deleted Classes in {assemblyName}.dll");
+            else if (!detectedHarmony)
+                Console.WriteLine($"Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll does not have any Harmony Patches that reference any Changed or Deleted Classes in {assemblyName}.dll");
         }
 
         // Use Regex to extract the class name from the .cs file

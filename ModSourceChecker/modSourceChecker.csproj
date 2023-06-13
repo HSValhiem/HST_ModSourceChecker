@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -13,13 +13,8 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="dnlib" Version="3.6.0" />
     <PackageReference Include="Mono.Cecil" Version="0.11.5" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Reference Include="dnlib">
-      <HintPath>..\..\Tools\dnSpy-netframework\bin\dnlib.dll</HintPath>
-    </Reference>
   </ItemGroup>
 
 </Project>
