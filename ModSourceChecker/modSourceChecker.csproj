@@ -16,4 +16,10 @@
     <PackageReference Include="Mono.Cecil" Version="0.11.5" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Reference Include="dnlib">
+      <HintPath>..\..\Tools\dnSpy-netframework\bin\dnlib.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
 </Project>
