@@ -1,61 +1,74 @@
-﻿using Mono.Cecil;
-using System.Reflection;
-using System.Text.RegularExpressions;
-using Microsoft.VisualBasic.FileIO;
+﻿using System.Text.RegularExpressions;
 using dnlib.DotNet;
+using Microsoft.VisualBasic.FileIO;
+using Mono.Cecil;
 using CustomAttribute = dnlib.DotNet.CustomAttribute;
+using SearchOption = System.IO.SearchOption;
 
 namespace modSourceChecker
 {
     class modSourceChecker
     {
-
-        private static readonly List<string> DeletedClasses = new ();
+        private static readonly HashSet<string> DeletedClasses = new HashSet<string>();
         public static string assemblyName = "";
+
+        static void Prompt(string message)
+        {
+            Console.WriteLine(message);
+            Console.ReadLine();
+        }
 
         static void Main(string[] args)
         {
-            //Check args
+            //string[] args = new string[] { "D:\\Valheim_Dev\\Valheim\\BepInEx\\plugins", "ZNet.Awake" };
+
+            // Check args
             if (args.Length < 1)
             {
-                Console.WriteLine("ERROR: Please drag the Mod onto the Exe or supply a command line path.");
-                Console.ReadLine();
+                Prompt("ERROR: Please drag the Mod onto the Exe or supply a command line path.");
                 return;
             }
 
             // Get Mod Path from Arg
             string dllPath = args[0];
-
-            //string dllPath = "D:\\Valheim_Dev\\WIP\\AzuAntiCheat.dll";
-
+            if (!Directory.Exists(dllPath) && args.Length > 1)
+            {
+                Prompt("ERROR: Detect run with Filters, but Path does not point to a Directory, please fix the path and try again.");
+                return;
+            }
 
             // Get Dir of ModSourceChecker.exe
             string? exeDirectory = GetExecutingAssemblyDirectory();
             if (exeDirectory == null)
             {
-                Console.WriteLine("ERROR: Unable to determine the executable directory.");
-                Console.ReadLine();
+                Prompt("ERROR: Unable to determine the executable directory.");
                 return;
             }
 
             // Read CSV and Parse Changed or Deleted .cs classes to list
             string csvPath = Path.Combine(exeDirectory, "newVersion.csv");
             List<string>? changedClasses = parseCsvToList(csvPath);
-            if (changedClasses == null)
+            if (changedClasses == null || changedClasses.Count == 0)
             {
-                Console.WriteLine($"ERROR: Unable to read CSV File at Path: {csvPath}");
-                Console.ReadLine();
-                return;
-            }
-            if (changedClasses.Count == 0)
-            {
-                Console.WriteLine($"ERROR: Unable to Parse CSV at Path: {csvPath}");
-                Console.ReadLine();
+                Prompt($"ERROR: Unable to read or parse the CSV file at Path: {csvPath}");
                 return;
             }
 
-            // Checks Mod for Changed or Deleted Classes
-            checkMod(dllPath, changedClasses);
+            // If we have extra args then we are using Filters
+            HashSet<string> FilterTargets = null;
+            if (args.Length > 1)
+            {
+                FilterTargets = new HashSet<string>(args.Skip(1));
+            }
+
+            // Get all DLL files recursively
+            string[] dllFiles = Directory.GetFiles(dllPath, "*.dll", SearchOption.AllDirectories);
+
+            // Process the DLL files
+            foreach (string dllFile in dllFiles)
+            {
+                checkMod(dllFile, changedClasses, FilterTargets);
+            }
 
             // Wait to exit Console
             Console.WriteLine("Press Enter to Exit");
@@ -65,18 +78,18 @@ namespace modSourceChecker
         // Return Current Working Directory
         static string? GetExecutingAssemblyDirectory()
         {
-            string? assemblyLocation = Assembly.GetEntryAssembly()?.Location;
-
-            if (assemblyLocation != null)
-                return Path.GetDirectoryName(assemblyLocation);
-
-            return null;
+            return Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
         }
-
 
         // Parse CSV File into 
         public static List<string>? parseCsvToList(string filePath)
         {
+            if (!File.Exists(filePath))
+            {
+                Prompt("ERROR: CSV Missing, Did you Use WinMerge to make it and save it to the current Directory?");
+                return null;
+            }
+
             List<string> data = new List<string>();
 
             try
@@ -86,7 +99,7 @@ namespace modSourceChecker
 
                 string csNewPath = "";
                 string csOldPath = "";
-                
+
                 // Get Source Code Filepaths from first line of CSV
                 Match match = Regex.Match(lines[0], @"Compare\s(.+)\swith\s(.+)");
                 if (match.Success && match.Groups.Count >= 3)
@@ -144,57 +157,53 @@ namespace modSourceChecker
             }
             catch (Exception ex)
             {
-                string errorText = "ERROR: " + ex.Message;
-                if (ex.GetType() == typeof(FileNotFoundException))
-                    errorText = "ERROR: CSV Missing, Did you Use WinMerge to make it and save it to the current Directory?";
-
-                Console.WriteLine(errorText);
-                Console.ReadLine();
+                Prompt("ERROR: " + ex.Message);
                 return null;
             }
 
             return data;
         }
 
-
-
-
         // Checks a provided Mod DLL for any class references that are changed or deleted
-        public static void checkMod(string dllPath, List<string> csFiles)
+        public static void checkMod(string dllPath, List<string> csFiles, HashSet<string> FilterTargets = null)
         {
             // Read DLL with Cecil
             AssemblyDefinition assembly = AssemblyDefinition.ReadAssembly(dllPath);
-
             // Check for Changed Classes
-            bool detected = false;
-            foreach (string csFile in csFiles)
+            bool detectedChangedClass = false;
+            if (FilterTargets == null)
             {
-                string csContent = File.ReadAllText(csFile);
-                string? mainClassName = GetMainClassName(csContent);
-
-                if (assembly.MainModule.Types.Any(t => t.Name == mainClassName))
+                foreach (string csFile in csFiles)
                 {
-                    Console.WriteLine($"Detected Changed Class \"{Path.GetFileNameWithoutExtension(csFile)}\" in Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll from referenced {assemblyName}.dll");
-                    detected = true;
+                    string csContent = File.ReadAllText(csFile);
+                    string? mainClassName = GetMainClassName(csContent);
+
+                    if (assembly.MainModule.Types.Any(t => t.Name == mainClassName))
+                    {
+                        Console.WriteLine(
+                            $"Detected Changed Class \"{Path.GetFileNameWithoutExtension(csFile)}\" in Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll from referenced {assemblyName}.dll");
+                        detectedChangedClass = true;
+                    }
                 }
+
+                // Check for Deleted Classes
+                foreach (string csFile in DeletedClasses)
+                {
+                    string csContent = File.ReadAllText(csFile);
+                    string? mainClassName = GetMainClassName(csContent);
+
+                    if (assembly.MainModule.Types.Any(t => t.Name == mainClassName))
+                    {
+                        Console.WriteLine(
+                            $"Detected Deleted Class \"{Path.GetFileNameWithoutExtension(csFile)}\" in Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll from referenced {assemblyName}.dll");
+                        detectedChangedClass = true;
+                    }
+                }
+                Console.WriteLine("");
             }
 
-            // Check for Deleted Classes
-            foreach (string csFile in DeletedClasses)
-            {
-                string csContent = File.ReadAllText(csFile);
-                string? mainClassName = GetMainClassName(csContent);
-
-                if (assembly.MainModule.Types.Any(t => t.Name == mainClassName))
-                {
-                    Console.WriteLine($"Detected Deleted Class \"{Path.GetFileNameWithoutExtension(csFile)}\" in Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll from referenced {assemblyName}.dll");
-                    detected = true;
-                }
-            }
-
-            Console.WriteLine("");
             // Search for Harmony Patches that Target Changed Classes
-            bool detectedHarmony = false;
+            bool detectedHarmonyPatch = false;
             ModuleDefMD module = ModuleDefMD.Load(dllPath);
             foreach (string csFile in csFiles)
             {
@@ -217,8 +226,29 @@ namespace modSourceChecker
 
                                 if (className == mainClassName)
                                 {
-                                    Console.WriteLine($"Detected Harmony Patch of Changed Class: \"{className}\" Method: \"{methodName}\" in Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll from referenced {assemblyName}.dll");
-                                    detectedHarmony = true;
+                                    if (FilterTargets != null)
+                                    {
+                                        foreach (var filter in FilterTargets)
+                                        {
+                                            // Split the string by '.'
+                                            string[] parts = filter.Split('.');
+
+                                            // Check the number of parts
+                                            if (parts.Length != 2)
+                                            {
+                                                Prompt($"ERROR: The Filter String: {filter} is not formatted correctly");
+                                                return;
+                                            }
+
+                                            if (className == parts[0] && methodName == parts[1])
+                                                Console.WriteLine($"Detected Harmony Patch of Changed Class: \"{className}\" Method: \"{methodName}\" in Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll from referenced {assemblyName}.dll with Filter: \"{filter}\"");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine($"Detected Harmony Patch of Changed Class: \"{className}\" Method: \"{methodName}\" in Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll from referenced {assemblyName}.dll");
+                                        detectedHarmonyPatch = true;
+                                    }
                                 }
                             }
                         }
@@ -226,40 +256,31 @@ namespace modSourceChecker
                 }
             }
 
-
-            // Report Clean
-            if (!detectedHarmony && !detectedHarmony)
+            if (FilterTargets == null)
             {
-                Console.WriteLine($"Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll does not have any References to Changed or Deleted Classes in {assemblyName}.dll");
-                Console.WriteLine($"It Should work With the New Update with no Issues");
+                // Report Clean
+                if (!detectedHarmonyPatch && !detectedChangedClass)
+                {
+                    Console.WriteLine($"Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll does not have any references to changed or deleted classes in {assemblyName}.dll");
+                    Console.WriteLine("It should work with the new update without issues.");
+                }
+                Console.WriteLine();
             }
-            else if (!detected)
-                Console.WriteLine($"Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll does not Directly-Reference(Non-Harmony) any Changed or Deleted Classes in {assemblyName}.dll");
-            else if (!detectedHarmony)
-                Console.WriteLine($"Mod \"{Path.GetFileNameWithoutExtension(dllPath)}\".dll does not have any Harmony Patches that reference any Changed or Deleted Classes in {assemblyName}.dll");
+
+            module.Dispose();
+            assembly.Dispose();
         }
 
-        // Use Regex to extract the class name from the .cs file
-        public static string? GetMainClassName(string fileContent)
+        // Get the main class name from the C# source code
+        public static string? GetMainClassName(string sourceCode)
         {
-
-            try
+            Match match = Regex.Match(sourceCode, @"class\s+([a-zA-Z_][a-zA-Z0-9_]*)");
+            if (match.Success && match.Groups.Count >= 2)
             {
-                Regex regex = new Regex(@"class\s+(\w+)", RegexOptions.Multiline);
-                Match match = regex.Match(fileContent);
-
-                if (match.Success)
-                {
-                    return match.Groups[1].Value;
-                }
+                return match.Groups[1].Value;
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine("ERROR: " + ex.Message);
-                Console.ReadLine();
-            }
-
             return null;
         }
     }
 }
+
